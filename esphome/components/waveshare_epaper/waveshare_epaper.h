@@ -7,6 +7,11 @@
 namespace esphome {
 namespace waveshare_epaper {
 
+enum bits_per_pixel {
+  ONE_BIT_PER_PIXEL,
+  TWO_BIT_PER_PIXEL,
+};
+
 class WaveshareEPaper : public PollingComponent,
                         public display::DisplayBuffer,
                         public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
@@ -55,6 +60,9 @@ class WaveshareEPaper : public PollingComponent,
   }
 
   virtual int get_width_controller() { return this->get_width_internal(); };
+
+  virtual enum bits_per_pixel get_bits_per_pixel() { return ONE_BIT_PER_PIXEL; }
+  virtual uint8_t get_bits_for_pixel(Color c) { return c.is_on(); }
 
   uint32_t get_buffer_length_();
   uint32_t reset_duration_{200};
@@ -299,6 +307,9 @@ class WaveshareEPaper4P2InBV2 : public WaveshareEPaper {
   int get_width_internal() override;
 
   int get_height_internal() override;
+
+  enum bits_per_pixel get_bits_per_pixel() override;
+  uint8_t get_bits_for_pixel(Color c) override;
 };
 
 class WaveshareEPaper5P8In : public WaveshareEPaper {
@@ -411,6 +422,9 @@ class WaveshareEPaper7P5InBV2 : public WaveshareEPaper {
   int get_width_internal() override;
 
   int get_height_internal() override;
+
+  enum bits_per_pixel get_bits_per_pixel() override;
+  uint8_t get_bits_for_pixel(Color c) override;
 };
 
 class WaveshareEPaper7P5InBV3 : public WaveshareEPaper {
