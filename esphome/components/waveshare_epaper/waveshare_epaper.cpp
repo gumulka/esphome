@@ -134,21 +134,35 @@ void WaveshareEPaper::fill(Color color) {
   for (uint32_t i = 0; i < this->get_buffer_length_(); i++)
     this->buffer_[i] = fill;
 }
+
+void draw_pixel_into_buffer(uint8_t *buffer, int pos, int subpos, bool draw) {
+  // flip logic
+  if (!draw) {
+    buffer[pos] |= 0x80 >> subpos;
+  } else {
+    buffer[pos] &= ~(0x80 >> subpos);
+  }
+}
 void HOT WaveshareEPaper::draw_absolute_pixel_internal(int x, int y, Color color) {
   if (x >= this->get_width_internal() || y >= this->get_height_internal() || x < 0 || y < 0)
     return;
 
   const uint32_t pos = (x + y * this->get_width_controller()) / 8u;
   const uint8_t subpos = x & 0x07;
-  // flip logic
-  if (!color.is_on()) {
-    this->buffer_[pos] |= 0x80 >> subpos;
-  } else {
-    this->buffer_[pos] &= ~(0x80 >> subpos);
+  uint8_t pixel = get_bits_for_pixel(color);
+  switch (this->get_bits_per_pixel()) {
+    case TWO_BIT_PER_PIXEL:
+      // buffer is divided into first half for storage for first bit, second half storage for second bit.
+      // normally it is used for black and red and black and they are send one after another.
+      draw_pixel_into_buffer(this->buffer_, pos + (this->get_buffer_length_() / 2), subpos, !!(pixel & 0x02));
+      /* FALLTHROUGH */
+    case ONE_BIT_PER_PIXEL:
+      draw_pixel_into_buffer(this->buffer_, pos, subpos, !!(pixel & 0x01));
+      break;
   }
 }
 uint32_t WaveshareEPaper::get_buffer_length_() {
-  return this->get_width_controller() * this->get_height_internal() / 8u;
+  return this->get_width_controller() * this->get_height_internal() * this->get_bits_per_pixel() / 8u;
 }
 void WaveshareEPaper::start_command_() {
   this->dc_pin_->digital_write(false);
@@ -711,10 +725,11 @@ void WaveshareEPaper2P9InBV3::initialize() {
 }
 void HOT WaveshareEPaper2P9InBV3::display() {
   // COMMAND DATA START TRANSMISSION 1 (B/W data)
+  size_t halfsize = this->get_buffer_length_() / 2;
   this->command(0x10);
   delay(2);
   this->start_data_();
-  this->write_array(this->buffer_, this->get_buffer_length_());
+  this->write_array(this->buffer_, halfsize);
   this->end_data_();
   this->command(0x92);
   delay(2);
@@ -723,8 +738,7 @@ void HOT WaveshareEPaper2P9InBV3::display() {
   this->command(0x13);
   delay(2);
   this->start_data_();
-  for (size_t i = 0; i < this->get_buffer_length_(); i++)
-    this->write_byte(0xFF);
+  this->write_array(this->buffer_ + halfsize, halfsize);
   this->end_data_();
   this->command(0x92);
   delay(2);
@@ -740,6 +754,16 @@ void HOT WaveshareEPaper2P9InBV3::display() {
 }
 int WaveshareEPaper2P9InBV3::get_width_internal() { return 128; }
 int WaveshareEPaper2P9InBV3::get_height_internal() { return 296; }
+enum bits_per_pixel WaveshareEPaper2P9InBV3::get_bits_per_pixel() { return TWO_BIT_PER_PIXEL; }
+uint8_t WaveshareEPaper2P9InBV3::get_bits_for_pixel(Color c) {
+  uint8_t pixel = 0x00;
+  if (c.red > c.green && c.red > c.blue) {
+    pixel = 0x02;
+  } else if (c.is_on()) {
+    pixel = 0x01;
+  }
+  return pixel;
+}
 void WaveshareEPaper2P9InBV3::dump_config() {
   LOG_DISPLAY("", "Waveshare E-Paper", this);
   ESP_LOGCONFIG(TAG, "  Model: 2.9in (B) V3");
@@ -1121,14 +1145,13 @@ void HOT WaveshareEPaper4P2InBV2::display() {
   // COMMAND DATA START TRANSMISSION 1 (B/W data)
   this->command(0x10);
   this->start_data_();
-  this->write_array(this->buffer_, this->get_buffer_length_());
+  this->write_array(this->buffer_, this->get_buffer_length_() / 2);
   this->end_data_();
 
   // COMMAND DATA START TRANSMISSION 2 (RED data)
   this->command(0x13);
   this->start_data_();
-  for (size_t i = 0; i < this->get_buffer_length_(); i++)
-    this->write_byte(0xFF);
+  this->write_array(this->buffer_ + this->get_buffer_length_() / 2, this->get_buffer_length_() / 2);
   this->end_data_();
   delay(2);
 
@@ -1142,6 +1165,16 @@ void HOT WaveshareEPaper4P2InBV2::display() {
 }
 int WaveshareEPaper4P2InBV2::get_width_internal() { return 400; }
 int WaveshareEPaper4P2InBV2::get_height_internal() { return 300; }
+enum bits_per_pixel WaveshareEPaper4P2InBV2::get_bits_per_pixel() { return TWO_BIT_PER_PIXEL; }
+uint8_t WaveshareEPaper4P2InBV2::get_bits_for_pixel(Color c) {
+  uint8_t pixel = 0x00;
+  if (c.red > c.green && c.red > c.blue) {
+    pixel = 0x02;
+  } else if (c.is_on()) {
+    pixel = 0x01;
+  }
+  return pixel;
+}
 void WaveshareEPaper4P2InBV2::dump_config() {
   LOG_DISPLAY("", "Waveshare E-Paper", this);
   ESP_LOGCONFIG(TAG, "  Model: 4.2in (B V2)");
@@ -1924,19 +1957,34 @@ void HOT WaveshareEPaper7P5InBC::display() {
   // COMMAND DATA START TRANSMISSION 1
   this->command(0x10);
   this->start_data_();
+  size_t halfbufferlength = this->get_buffer_length_() / 2;
 
-  for (size_t i = 0; i < this->get_buffer_length_(); i++) {
+  for (size_t i = 0; i < halfbufferlength; i++) {
     // A line of eight source pixels (each a bit in this byte)
-    uint8_t eight_pixels = this->buffer_[i];
+    uint8_t eight_black_pixels = this->buffer_[i];
+    uint8_t eight_red_pixels = this->buffer_[i + halfbufferlength];
 
     for (uint8_t j = 0; j < 8; j += 2) {
       /* For bichromatic displays, each byte represents two pixels. Each nibble encodes a pixel: 0=white, 3=black,
-      4=color. Therefore, e.g. 0x44 = two adjacent color pixels, 0x33 is two adjacent black pixels, etc. If you want
-      to draw using the color pixels, change '0x30' with '0x40' and '0x03' with '0x04' below. */
-      uint8_t left_nibble = (eight_pixels & 0x80) ? 0x30 : 0x00;
-      eight_pixels <<= 1;
-      uint8_t right_nibble = (eight_pixels & 0x80) ? 0x03 : 0x00;
-      eight_pixels <<= 1;
+      4=color. Therefore, e.g. 0x44 = two adjacent color pixels, 0x33 is two adjacent black pixels, etc. */
+      uint8_t left_nibble = 0x00;
+      if (eight_black_pixels & 0x80) {
+        left_nibble = 0x30;
+      }
+      if (!(eight_red_pixels & 0x80)) {
+        left_nibble = 0x40;
+      }
+      eight_black_pixels <<= 1;
+      eight_red_pixels <<= 1;
+      uint8_t right_nibble = 0x00;
+      if (eight_black_pixels & 0x80) {
+        right_nibble = 0x03;
+      }
+      if (!(eight_red_pixels & 0x80)) {
+        right_nibble = 0x04;
+      }
+      eight_black_pixels <<= 1;
+      eight_red_pixels <<= 1;
       this->write_byte(left_nibble | right_nibble);
     }
     App.feed_wdt();
@@ -1954,6 +2002,18 @@ void HOT WaveshareEPaper7P5InBC::display() {
 int WaveshareEPaper7P5InBC::get_width_internal() { return 640; }
 
 int WaveshareEPaper7P5InBC::get_height_internal() { return 384; }
+
+enum bits_per_pixel WaveshareEPaper7P5InBC::get_bits_per_pixel() { return TWO_BIT_PER_PIXEL; }
+
+uint8_t WaveshareEPaper7P5InBC::get_bits_for_pixel(Color c) {
+  uint8_t pixel = 0x00;
+  if (c.red > c.green && c.red > c.blue) {
+    pixel = 0x02;
+  } else if (c.is_on()) {
+    pixel = 0x01;
+  }
+  return pixel;
+}
 
 void WaveshareEPaper7P5InBC::dump_config() {
   LOG_DISPLAY("", "Waveshare E-Paper", this);
